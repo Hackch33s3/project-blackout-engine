@@ -15,3 +15,19 @@ services:
       resources:
         limits:
           memory: 1G
+
+  worker:
+    build: .
+    container_name: project-blackout-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - ENGINE_URL=http://engine:8000
+    command: python queue_worker.py
+    depends_on:
+      - engine
+    deploy:
+      resources:
+        limits:
+          memory: 512M

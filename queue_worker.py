@@ -31,6 +31,7 @@ def process_queue():
 
     # 2. Mark as processing
     supabase.table('scan_queue').update({'status': 'PROCESSING'}).eq('id', job_id).execute()
+    supabase.table('clients').update({'status': 'SCANNING'}).eq('id', client_id).execute()
 
     # 3. Get client PII
     client_data = supabase.table('clients').select('full_name, past_city').eq('id', client_id).single().execute()
@@ -52,12 +53,25 @@ def process_queue():
                 'full_name': client_data.data['full_name'],
                 'past_city': client_data.data['past_city']
             },
-            timeout=300 # 5 minute timeout for scraping
+            timeout=300
         )
         
         if res.status_code == 200:
+            data = res.json()
+            targets = data.get('targets', [])
+            
+            # Save targets to the targets table
+            for t in targets:
+                supabase.table('targets').insert({
+                    'client_id': client_id,
+                    'broker_name': t.get('broker_name', t.get('source', 'unknown')),
+                    'profile_url': t['url'],
+                    'status': 'EXPOSED'
+                }).execute()
+            
             supabase.table('scan_queue').update({'status': 'COMPLETED'}).eq('id', job_id).execute()
-            print(f"[+] Job {job_id} completed for client {client_id}")
+            supabase.table('clients').update({'status': 'AUDIT_COMPLETE'}).eq('id', client_id).execute()
+            print(f"[+] Job {job_id} completed for client {client_id} — {len(targets)} targets found")
         else:
             supabase.table('scan_queue').update({'status': 'FAILED'}).eq('id', job_id).execute()
             print(f"[-] Job {job_id} failed. Engine returned {res.status_code}")
