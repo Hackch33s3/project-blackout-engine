@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
 import random
+from typing import Optional
 
 PROXY_SOURCES = [
     "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all",
