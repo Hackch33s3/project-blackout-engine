@@ -30,7 +30,8 @@ services:
       - .env
     environment:
       - ENGINE_URL=http://engine:8000
-    command: python queue_worker.py
+      - PYTHONUNBUFFERED=1
+    command: python -u queue_worker.py
     depends_on:
       - engine
     deploy:
