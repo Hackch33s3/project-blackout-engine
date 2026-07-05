@@ -1,9 +1,6 @@
 from playwright.async_api import async_playwright
-from proxy_manager import get_working_proxy
 from urllib.parse import quote_plus, unquote, urlparse, parse_qs
-
-def ddg(t, n, c):
-    return t(n, c)
+import os
 
 PHASE_1_SITES = [
     {
@@ -138,12 +135,12 @@ def extract_url(href: str) -> str:
 async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
     all_targets = []
     search_query = f'"{full_name}" "{past_city}"'
+    brightdata_proxy = os.environ.get("BRIGHTDATA_PROXY")
 
-    for attempt in range(1, 4):
-        print(f"\n=== Attempt {attempt}/3 for {full_name} ===")
-        proxy = None
-        if attempt > 1:
-            proxy = await get_working_proxy()
+    for attempt in range(1, 3):
+        proxy = brightdata_proxy if attempt == 2 else None
+        tag = "brightdata" if proxy else "direct"
+        print(f"\n=== Attempt {attempt}/2 ({tag}) for {full_name} ===")
 
         try:
             async with async_playwright() as p:
@@ -157,9 +154,7 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                 }
                 if proxy:
                     launch_args["proxy"] = {"server": proxy}
-                    print(f"proxy: {proxy}")
-                else:
-                    print("proxy: direct")
+                print(f"proxy: {tag}")
 
                 browser = await p.chromium.launch(**launch_args)
                 context = await browser.new_context(
@@ -169,44 +164,41 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                 )
                 page = await context.new_page()
 
-                # ---- DuckDuckGo search (direct only, proxy breaks HTTPS) ----
-                if not proxy:
-                    try:
-                        print("  DuckDuckGo  search...", end=" ")
-                        await page.goto(
-                            f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
-                            timeout=25000, wait_until="domcontentloaded"
-                        )
-                        await page.wait_for_timeout(2000)
-                        results = await page.query_selector_all("a.result__a")
-                        found = 0
-                        for r in results:
-                            try:
-                                href = await r.get_attribute("href")
-                                title = await r.inner_text()
-                                url = extract_url(href or "")
-                                if url and any(d in url for d in
-                                    ["truepeople", "fastpeople", "peoplesearchnow", "whitepages",
-                                     "peekyou", "radaris", "thatsthem", "familytreenow",
-                                     "searchpeoplefree", "nuwber", "usphonebook",
-                                     "advancedbackgroundcheck", "criminalwatchdog",
-                                     "quickpeoplesearch", "checkpeople", "cyberbackground",
-                                     "xlek", "homemetry", "zabasearch"]):
-                                    if url not in [t["url"] for t in all_targets]:
-                                        all_targets.append({
-                                            "title": title.strip(),
-                                            "url": url,
-                                            "broker_name": url.split("/")[2].replace("www.", ""),
-                                            "source": "search",
-                                        })
-                                        found += 1
-                            except Exception:
-                                continue
-                        print(f"{found} broker links")
-                    except Exception as e:
-                        print(f"FAILED — {str(e)[:60]}")
-                else:
-                    print("  DuckDuckGo  skipped (proxy)")
+                # ---- DuckDuckGo search ----
+                try:
+                    print("  DuckDuckGo  search...", end=" ")
+                    await page.goto(
+                        f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
+                        timeout=25000, wait_until="domcontentloaded"
+                    )
+                    await page.wait_for_timeout(2000)
+                    results = await page.query_selector_all("a.result__a")
+                    found = 0
+                    for r in results:
+                        try:
+                            href = await r.get_attribute("href")
+                            title = await r.inner_text()
+                            url = extract_url(href or "")
+                            if url and any(d in url for d in
+                                ["truepeople", "fastpeople", "peoplesearchnow", "whitepages",
+                                 "peekyou", "radaris", "thatsthem", "familytreenow",
+                                 "searchpeoplefree", "nuwber", "usphonebook",
+                                 "advancedbackgroundcheck", "criminalwatchdog",
+                                 "quickpeoplesearch", "checkpeople", "cyberbackground",
+                                 "xlek", "homemetry", "zabasearch"]):
+                                if url not in [t["url"] for t in all_targets]:
+                                    all_targets.append({
+                                        "title": title.strip(),
+                                        "url": url,
+                                        "broker_name": url.split("/")[2].replace("www.", ""),
+                                        "source": "search",
+                                    })
+                                    found += 1
+                        except Exception:
+                            continue
+                    print(f"{found} broker links")
+                except Exception as e:
+                    print(f"FAILED — {str(e)[:60]}")
 
                 # ---- Direct broker scraping ----
                 for site in PHASE_1_SITES:
