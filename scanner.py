@@ -1,21 +1,6 @@
 from playwright.async_api import async_playwright
 from urllib.parse import quote_plus, unquote, urlparse, parse_qs
-import os, requests
-
-BRIGHTDATA_TOKEN = os.environ.get("BRIGHTDATA_TOKEN")
-BRIGHTDATA_ZONE = os.environ.get("BRIGHTDATA_ZONE", "projectblkout")
-
-def fetch_via_brightdata(url: str) -> tuple[int, str]:
-    r = requests.post(
-        "https://api.brightdata.com/request",
-        json={"zone": BRIGHTDATA_ZONE, "url": url, "format": "raw"},
-        headers={
-            "Authorization": f"Bearer {BRIGHTDATA_TOKEN}",
-            "Content-Type": "application/json"
-        },
-        timeout=30
-    )
-    return r.status_code, r.text
+import os
 
 PHASE_1_SITES = [
     {
@@ -150,49 +135,44 @@ def extract_url(href: str) -> str:
 async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
     all_targets = []
     search_query = f'"{full_name}" "{past_city}"'
+    brightdata_proxy = os.environ.get("BRIGHTDATA_PROXY")
 
     for attempt in range(1, 3):
-        tag = "brightdata" if attempt == 2 else "direct"
+        proxy = brightdata_proxy if attempt == 2 else None
+        tag = "brightdata" if proxy else "direct"
         print(f"\n=== Attempt {attempt}/2 ({tag}) for {full_name} ===")
 
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=[
+                launch_args = {
+                    "headless": True,
+                    "args": [
                         "--no-sandbox", "--disable-setuid-sandbox",
                         "--disable-blink-features=AutomationControlled",
                         "--disable-dev-shm-usage",
                     ]
-                )
+                }
+                if proxy:
+                    launch_args["proxy"] = {"server": proxy}
+                print(f"proxy: {tag}")
+
+                browser = await p.chromium.launch(**launch_args)
                 context = await browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                     viewport={"width": 1920, "height": 1080},
                     locale="en-US",
                 )
                 page = await context.new_page()
-                print(f"proxy: {'direct' if attempt == 1 else 'brightdata api'}")
 
                 # ---- DuckDuckGo search ----
                 try:
                     print("  DuckDuckGo  search...", end=" ")
-                    if attempt == 1:
-                        await page.goto(
-                            f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
-                            timeout=25000, wait_until="domcontentloaded"
-                        )
-                        await page.wait_for_timeout(2000)
-                        results = await page.query_selector_all("a.result__a")
-                    else:
-                        status, html = fetch_via_brightdata(
-                            f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}"
-                        )
-                        if status == 200:
-                            await page.set_content(html, url="https://html.duckduckgo.com")
-                            results = await page.query_selector_all("a.result__a")
-                        else:
-                            raise Exception(f"HTTP {status}")
-
+                    await page.goto(
+                        f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
+                        timeout=25000, wait_until="domcontentloaded"
+                    )
+                    await page.wait_for_timeout(2000)
+                    results = await page.query_selector_all("a.result__a")
                     found = 0
                     for r in results:
                         try:
@@ -220,7 +200,7 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                 except Exception as e:
                     print(f"FAILED — {str(e)[:60]}")
 
-                # ---- Broker scraping ----
+                # ---- Direct broker scraping ----
                 for site in PHASE_1_SITES:
                     name = site["name"]
                     if any(t.get("broker_name", "").replace("www.", "") in name.lower()
@@ -230,14 +210,9 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
 
                     url = site["url"](full_name, past_city)
                     try:
-                        if attempt == 1:
-                            resp = await page.goto(url, timeout=20000, wait_until="domcontentloaded")
-                            await page.wait_for_timeout(2000)
-                            status = resp.status if resp else 0
-                        else:
-                            status, html = fetch_via_brightdata(url)
-                            if status == 200:
-                                await page.set_content(html, url=url)
+                        resp = await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+                        await page.wait_for_timeout(2000)
+                        status = resp.status if resp else 0
 
                         if status not in (200, 301, 302):
                             print(f"  {name:20s} HTTP {status}")
