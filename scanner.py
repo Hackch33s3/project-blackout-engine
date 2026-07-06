@@ -156,6 +156,7 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                         "--no-sandbox", "--disable-setuid-sandbox",
                         "--disable-blink-features=AutomationControlled",
                         "--disable-dev-shm-usage",
+                        "--ignore-certificate-errors",
                     ]
                 }
                 if proxy_cfg:
