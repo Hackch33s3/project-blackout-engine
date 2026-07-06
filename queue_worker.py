@@ -79,7 +79,7 @@ def process_queue():
                 "full_name": client["full_name"],
                 "past_city": client["past_city"]
             },
-            timeout=300
+            timeout=900
         )
 
         if res.status_code == 200:

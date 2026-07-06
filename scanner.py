@@ -175,11 +175,16 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                 # ---- DuckDuckGo search ----
                 try:
                     print("  DuckDuckGo  search...", end=" ")
-                    await page.goto(
+                        await page.goto(
                         f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
-                            timeout=45000, wait_until="domcontentloaded"
+                            timeout=60000, wait_until="domcontentloaded"
                     )
                     await page.wait_for_timeout(2000)
+                    page_text = await page.inner_text("body")
+                    if "captcha" in page_text.lower():
+                        print(f"DDG captcha")
+                    elif len(page_text) < 200:
+                        print(f"DDG short page ({len(page_text)} chars): {page_text[:100]}")
                     results = await page.query_selector_all("a.result__a")
                     found = 0
                     for r in results:
@@ -218,7 +223,7 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
 
                     url = site["url"](full_name, past_city)
                     try:
-                        resp = await page.goto(url, timeout=35000, wait_until="domcontentloaded")
+                        resp = await page.goto(url, timeout=60000, wait_until="domcontentloaded")
                         await page.wait_for_timeout(2000)
                         status = resp.status if resp else 0
 
