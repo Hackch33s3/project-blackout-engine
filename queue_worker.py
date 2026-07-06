@@ -119,8 +119,23 @@ def recover_stuck_jobs():
     except Exception as e:
         print(f"[!] Failed to recover stuck jobs: {e}")
 
+def wait_for_engine():
+    print("[*] Waiting for engine to be ready...", end=" ")
+    for i in range(30):
+        try:
+            r = requests.get(f"{ENGINE_URL}/", timeout=5)
+            if r.status_code == 200:
+                print("ready")
+                return
+        except Exception:
+            pass
+        print(".", end="", flush=True)
+        time.sleep(2)
+    print("giving up (continuing anyway)")
+
 if __name__ == "__main__":
     recover_stuck_jobs()
+    wait_for_engine()
     print("[*] Queue Worker started. Polling every 10 seconds...")
     while True:
         try:
