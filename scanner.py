@@ -175,7 +175,7 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                 # ---- DuckDuckGo search ----
                 try:
                     print("  DuckDuckGo  search...", end=" ")
-                        await page.goto(
+                    await page.goto(
                         f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
                             timeout=60000, wait_until="domcontentloaded"
                     )
