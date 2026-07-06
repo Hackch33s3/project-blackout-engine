@@ -105,7 +105,22 @@ def process_queue():
         supabase_update("scan_queue", job_id, {"status": "FAILED"})
         print(f"[-] Job {job_id} crashed: {e}")
 
+def recover_stuck_jobs():
+    print("[*] Checking for stuck PROCESSING jobs...")
+    try:
+        stuck = supabase_get("scan_queue", {"status": "eq.PROCESSING", "select": "id"})
+        for job in stuck:
+            supabase_update("scan_queue", job["id"], {"status": "PENDING"})
+            print(f"  Reset job {job['id']} from PROCESSING → PENDING")
+        if stuck:
+            print(f"[+] Recovered {len(stuck)} stuck job(s)")
+        else:
+            print("[*] No stuck jobs found")
+    except Exception as e:
+        print(f"[!] Failed to recover stuck jobs: {e}")
+
 if __name__ == "__main__":
+    recover_stuck_jobs()
     print("[*] Queue Worker started. Polling every 10 seconds...")
     while True:
         try:
