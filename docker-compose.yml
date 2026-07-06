@@ -3,14 +3,13 @@ services:
     build: .
     container_name: project-blackout-engine
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    network_mode: host
     env_file:
       - .env
     environment:
-      - ENGINE_URL=http://engine:8000
+      - ENGINE_URL=http://localhost:8000
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://engine:8000')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -24,10 +23,11 @@ services:
     build: .
     container_name: project-blackout-worker
     restart: unless-stopped
+    network_mode: host
     env_file:
       - .env
     environment:
-      - ENGINE_URL=http://engine:8000
+      - ENGINE_URL=http://localhost:8000
       - PYTHONUNBUFFERED=1
     command: python -u queue_worker.py
     depends_on:
