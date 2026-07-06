@@ -135,11 +135,17 @@ def extract_url(href: str) -> str:
 async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
     all_targets = []
     search_query = f'"{full_name}" "{past_city}"'
-    brightdata_proxy = os.environ.get("BRIGHTDATA_PROXY")
+    brightdata_proxy_url = os.environ.get("BRIGHTDATA_PROXY")
+    brightdata_proxy_cfg = None
+    if brightdata_proxy_url and "@" in brightdata_proxy_url:
+        parts = brightdata_proxy_url.split("@")
+        creds, server = parts[0].replace("http://", ""), parts[1]
+        user, pw = creds.split(":", 1)
+        brightdata_proxy_cfg = {"server": f"http://{server}", "username": user, "password": pw}
 
     for attempt in range(1, 3):
-        proxy = brightdata_proxy if attempt == 2 else None
-        tag = "brightdata" if proxy else "direct"
+        proxy_cfg = brightdata_proxy_cfg if attempt == 2 else None
+        tag = "brightdata" if proxy_cfg else "direct"
         print(f"\n=== Attempt {attempt}/2 ({tag}) for {full_name} ===")
 
         try:
@@ -152,8 +158,8 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                         "--disable-dev-shm-usage",
                     ]
                 }
-                if proxy:
-                    launch_args["proxy"] = {"server": proxy}
+                if proxy_cfg:
+                    launch_args["proxy"] = proxy_cfg
                 print(f"proxy: {tag}")
 
                 browser = await p.chromium.launch(**launch_args)
@@ -169,7 +175,7 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
                     print("  DuckDuckGo  search...", end=" ")
                     await page.goto(
                         f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
-                        timeout=25000, wait_until="domcontentloaded"
+                            timeout=45000, wait_until="domcontentloaded"
                     )
                     await page.wait_for_timeout(2000)
                     results = await page.query_selector_all("a.result__a")
@@ -210,7 +216,7 @@ async def run_scan(client_id: str, full_name: str, past_city: str) -> dict:
 
                     url = site["url"](full_name, past_city)
                     try:
-                        resp = await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+                        resp = await page.goto(url, timeout=35000, wait_until="domcontentloaded")
                         await page.wait_for_timeout(2000)
                         status = resp.status if resp else 0
 
