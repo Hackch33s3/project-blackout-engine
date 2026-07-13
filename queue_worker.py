@@ -40,7 +40,7 @@ def process_queue():
         "status": "eq.PENDING",
         "order": "created_at.asc",
         "limit": "1",
-        "select": "id,client_id"
+        "select": "id,client_id,scan_tier"
     })
 
     if not data:
@@ -49,6 +49,7 @@ def process_queue():
     job = data[0]
     job_id = job["id"]
     client_id = job["client_id"]
+    scan_tier = job.get("scan_tier", "full")  # free teaser vs full paid scan
 
     # 2. Mark as processing
     supabase_update("scan_queue", job_id, {"status": "PROCESSING"})
@@ -77,7 +78,8 @@ def process_queue():
             json={
                 "clientId": client_id,
                 "full_name": client["full_name"],
-                "past_city": client["past_city"]
+                "past_city": client["past_city"],
+                "tier": scan_tier
             },
             timeout=900
         )
