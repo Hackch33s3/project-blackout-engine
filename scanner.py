@@ -361,6 +361,16 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
                 )
                 page = await context.new_page()
 
+                # Anti-bot stealth: kill the automation tells Cloudflare /
+                # PerimeterX fingerprint headless Chromium on. Runs before page
+                # scripts on every navigation.
+                await context.add_init_script(script="""
+                    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+                    Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+                    Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+                    try { window.chrome = { runtime: { connect: () => ({}), onConnect: null, sendMessage: () => ({}) } }; } catch (e) {}
+                """)
+
                 # Network-layer guarantee: abort any request to Google-owned
                 # hosts so nothing leaks to Google even if a flag is missed.
                 _GOOGLE_SUFFIXES = (
@@ -386,10 +396,17 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
                         f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}",
                             timeout=60000, wait_until="domcontentloaded"
                     )
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(4000)
                     page_text = await page.inner_text("body")
                     low = page_text.lower()
-                    if "captcha" in low:
+                    # Cloudflare / PerimeterX bot-wall markers — not a real result page.
+                    _CHALLENGE = ("verify you are human", "just a moment",
+                                  "checking your browser", "challenges.cloudflare.com",
+                                  "px-cloud.net", "enable javascript and cookies")
+                    if any(w in low for w in _CHALLENGE):
+                        print(f"DDG bot-wall -> retry")
+                        ddg_ok = False
+                    elif "captcha" in low:
                         print(f"DDG captcha -> retry")
                         ddg_ok = False
                     elif len(page_text) < 200:
@@ -433,8 +450,15 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
                     continue
 
                 # ---- Direct broker scraping ----
+                # Skip sites behind PerimeterX/HUMAN (px-cloud.net) — they serve
+                # an unbeatable bot wall to headless Chromium. Their profile URLs
+                # are still captured by the DDG discovery pass above, so the user
+                # is told "found on X" without a deep scrape.
+                _SKIP_DIRECT = {"PeopleSearchNow"}
                 for site in sites:
                     name = site["name"]
+                    if name in _SKIP_DIRECT:
+                        continue
                     if any(t.get("broker_name", "").replace("www.", "") in name.lower()
                            or name.lower() in t.get("broker_name", "").lower()
                            for t in all_targets):
@@ -451,7 +475,11 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
                             continue
 
                         text = await page.content()
-                        if any(w in text.lower() for w in ["captcha", "access denied", "automated"]):
+                        _CHALLENGE = ("captcha", "access denied", "automated",
+                                      "verify you are human", "just a moment",
+                                      "checking your browser", "px-cloud.net",
+                                      "challenges.cloudflare.com")
+                        if any(w in text.lower() for w in _CHALLENGE):
                             print(f"  {name:20s} blocked")
                             continue
 
