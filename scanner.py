@@ -307,6 +307,9 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
         if cfg:
             proxy_chain.append((env_key.lower().replace("_proxy", ""), cfg))
 
+    # Self-diagnostic: surfaces why a scan found 0 targets (empty chain = env not reaching this process).
+    print(f"[debug] proxy_chain={len(proxy_chain)} | DECODO={'set' if os.environ.get('DECODO_PROXY') else 'unset'} | BRIGHTDATA={'set' if os.environ.get('BRIGHTDATA_PROXY') else 'unset'}")
+
     for attempt in range(1, len(proxy_chain) + 1):
         tag, proxy_cfg = proxy_chain[attempt - 1]
         print(f"\n=== Attempt {attempt}/{len(proxy_chain)} ({tag}) for {full_name} [{loc['city']}, {loc['province'] or 'n/a'} / {loc['country'] or 'unknown'}] ===")
