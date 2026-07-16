@@ -63,6 +63,18 @@ def parse_location(past_city: str) -> dict:
         # Two-letter tail that isn't a CA province is treated as a US state.
         country = "US"
         province = tail
+    else:
+        # Bare city with no province/country token: infer CA from known
+        # Canadian cities so the broker list routes correctly.
+        _CA_CITIES = {
+            "toronto", "ottawa", "montreal", "vancouver", "calgary", "edmonton",
+            "winnipeg", "quebec", "quebec city", "hamilton", "kitchener",
+            "london", "victoria", "halifax", "saskatoon", "regina", "mississauga",
+            "brampton", "markham", "vaughan", "guelph", "oshawa", "st. john's",
+            "st john's", "sherbrooke", "kelowna", "abbotsford", "saskatoon",
+        }
+        if city.lower() in _CA_CITIES:
+            country = "CA"
 
     return {"city": city, "province": province, "country": country}
 
