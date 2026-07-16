@@ -282,18 +282,26 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
     else:
         search_query = f'"{full_name}" "{loc["city"]}"'
 
-    brightdata_proxy_url = os.environ.get("BRIGHTDATA_PROXY")
-    brightdata_proxy_cfg = None
-    if brightdata_proxy_url and "@" in brightdata_proxy_url:
-        parts = brightdata_proxy_url.split("@")
-        creds, server = parts[0].replace("http://", ""), parts[1]
+    # Build a proxy chain from env vars. Decodo is preferred (verified-live
+    # residential exit); BrightData ISP is the fallback. No "direct" attempt --
+    # bare datacenter IPs get captcha'd by DuckDuckGo/Cloudflare, which is
+    # exactly what was producing 0 targets.
+    def _parse_proxy(url):
+        if not url or "@" not in url:
+            return None
+        creds, server = url.replace("http://", "").split("@", 1)
         user, pw = creds.split(":", 1)
-        brightdata_proxy_cfg = {"server": f"http://{server}", "username": user, "password": pw}
+        return {"server": f"http://{server}", "username": user, "password": pw}
 
-    for attempt in range(1, 3):
-        proxy_cfg = brightdata_proxy_cfg if attempt == 2 else None
-        tag = "brightdata" if proxy_cfg else "direct"
-        print(f"\n=== Attempt {attempt}/2 ({tag}) for {full_name} [{loc['city']}, {loc['province'] or 'n/a'} / {loc['country'] or 'unknown'}] ===")
+    proxy_chain = []
+    for env_key in ("DECODO_PROXY", "BRIGHTDATA_PROXY"):
+        cfg = _parse_proxy(os.environ.get(env_key))
+        if cfg:
+            proxy_chain.append((env_key.lower().replace("_proxy", ""), cfg))
+
+    for attempt in range(1, len(proxy_chain) + 1):
+        tag, proxy_cfg = proxy_chain[attempt - 1]
+        print(f"\n=== Attempt {attempt}/{len(proxy_chain)} ({tag}) for {full_name} [{loc['city']}, {loc['province'] or 'n/a'} / {loc['country'] or 'unknown'}] ===")
 
         try:
             async with async_playwright() as p:
