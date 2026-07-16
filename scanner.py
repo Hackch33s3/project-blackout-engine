@@ -229,6 +229,11 @@ FREE_TIER_SITES = [s for s in PHASE_1_SITES if s["name"] in (
 
 # Domains surfaced by the DuckDuckGo discovery pass. Canadian brokers added
 # here so they get captured when they appear in search results.
+# Substrings used to recognise a data-broker result link coming out of the
+# DuckDuckGo discovery pass. Kept broad on purpose: the real DDG page for a
+# person returns spokeo / peoplefinders / mylife / whitepages etc., and the
+# narrow old list dropped 8 of 9. Whitelist = known broker / people-search
+# domains (NOT social: facebook, linkedin, instagram, twitter are excluded).
 DISCOVERY_DOMAINS = [
     "truepeople", "fastpeople", "peoplesearchnow", "whitepages",
     "peekyou", "radaris", "thatsthem", "familytreenow",
@@ -237,6 +242,9 @@ DISCOVERY_DOMAINS = [
     "quickpeoplesearch", "checkpeople", "cyberbackground",
     "xlek", "homemetry", "zabasearch",
     "canada411", "whitepages.ca",
+    "spokeo", "peoplefinders", "mylife", "beenverified",
+    "Intelius".lower(), "instantcheckmate", "truthfinder",
+    "peoplelooker", "neighborwho", "idtrue", "publicrecords",
 ]
 
 
@@ -380,31 +388,49 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
                     )
                     await page.wait_for_timeout(2000)
                     page_text = await page.inner_text("body")
-                    if "captcha" in page_text.lower():
-                        print(f"DDG captcha")
+                    low = page_text.lower()
+                    if "captcha" in low:
+                        print(f"DDG captcha -> retry")
+                        ddg_ok = False
                     elif len(page_text) < 200:
                         print(f"DDG short page ({len(page_text)} chars): {page_text[:100]}")
-                    results = await page.query_selector_all("a.result__a")
-                    found = 0
-                    for r in results:
-                        try:
-                            href = await r.get_attribute("href")
-                            title = await r.inner_text()
-                            url = extract_url(href or "")
-                            if url and any(d in url for d in DISCOVERY_DOMAINS):
-                                if url not in [t["url"] for t in all_targets]:
-                                    all_targets.append({
-                                        "title": title.strip(),
-                                        "url": url,
-                                        "broker_name": url.split("/")[2].replace("www.", ""),
-                                        "source": "search",
-                                    })
-                                    found += 1
-                        except Exception:
-                            continue
-                    print(f"{found} broker links")
+                        ddg_ok = False
+                    else:
+                        ddg_ok = True
+                        # Social profiles are not data-broker exposures; skip them.
+                        _SOCIAL = ("facebook.com", "linkedin.com", "instagram.com",
+                                    "twitter.com", "x.com", "youtube.com", "tiktok.com")
+                        results = await page.query_selector_all("a.result__a")
+                        found = 0
+                        for r in results:
+                            try:
+                                href = await r.get_attribute("href")
+                                title = await r.inner_text()
+                                url = extract_url(href or "")
+                                host = (urlparse(url).netloc or "").lower().replace("www.", "")
+                                if any(s in host for s in _SOCIAL):
+                                    continue
+                                if url and any(d in url for d in DISCOVERY_DOMAINS):
+                                    if url not in [t["url"] for t in all_targets]:
+                                        all_targets.append({
+                                            "title": title.strip(),
+                                            "url": url,
+                                            "broker_name": url.split("/")[2].replace("www.", ""),
+                                            "source": "search",
+                                        })
+                                        found += 1
+                            except Exception:
+                                continue
+                        print(f"{found} broker links")
                 except Exception as e:
                     print(f"FAILED — {str(e)[:60]}")
+                    ddg_ok = False
+
+                # If DDG returned nothing usable on this attempt, fall through to
+                # the next proxy in the chain instead of silently returning 0.
+                if not ddg_ok and attempt < len(proxy_chain):
+                    print("  DDG unusable on this proxy — trying next.")
+                    continue
 
                 # ---- Direct broker scraping ----
                 for site in sites:
