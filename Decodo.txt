@@ -11,3 +11,10 @@ result = requests.get(url, proxies = {
     'https': proxy
 })
 print(result.text)
+
+
+
+Residential Proxy
+---------------------
+pcraigbates@projectblackout.ca
+!UxDrD"nV8-Z,R?

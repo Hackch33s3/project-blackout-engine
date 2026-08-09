@@ -314,7 +314,9 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
         return {"server": f"http://{server}", "username": user, "password": pw}
 
     proxy_chain = []
-    for env_key in ("DECODO_PROXY", "BRIGHTDATA_PROXY"):
+    # BrightData (US ISP exit) first so US/CA brokers don't 403 on a
+    # non-US IP; Decodo is the fallback. Order is the only free geo lever.
+    for env_key in ("BRIGHTDATA_PROXY", "DECODO_PROXY"):
         cfg = _parse_proxy(os.environ.get(env_key))
         if cfg:
             proxy_chain.append((env_key.lower().replace("_proxy", ""), cfg))
@@ -462,84 +464,99 @@ async def run_scan(client_id: str, full_name: str, past_city: str, tier: str = "
                 # the next proxy in the chain instead of silently returning 0.
                 if not ddg_ok and attempt < len(proxy_chain):
                     print("  DDG unusable on this proxy — trying next.")
+                    await browser.close()
                     continue
 
-                # ---- Direct broker scraping ----
-                # Skip sites behind PerimeterX/HUMAN (px-cloud.net) — they serve
-                # an unbeatable bot wall to headless Chromium. Their profile URLs
-                # are still captured by the DDG discovery pass above, so the user
-                # is told "found on X" without a deep scrape.
-                _SKIP_DIRECT = {"PeopleSearchNow"}
-                for site in sites:
-                    name = site["name"]
-                    if name in _SKIP_DIRECT:
-                        continue
-                    if any(t.get("broker_name", "").replace("www.", "") in name.lower()
-                           or name.lower() in t.get("broker_name", "").lower()
-                           for t in all_targets):
-                        continue
-
-                    url = site["url"](full_name, loc)
-                    try:
-                        resp = await page.goto(url, timeout=60000, wait_until="domcontentloaded")
-                        await page.wait_for_timeout(2000)
-                        status = resp.status if resp else 0
-
-                        if status not in (200, 301, 302):
-                            print(f"  {name:20s} HTTP {status}")
-                            continue
-
-                        text = await page.content()
-                        _CHALLENGE = ("captcha", "access denied", "automated",
-                                      "verify you are human", "just a moment",
-                                      "checking your browser", "px-cloud.net",
-                                      "challenges.cloudflare.com")
-                        if any(w in text.lower() for w in _CHALLENGE):
-                            print(f"  {name:20s} blocked")
-                            continue
-
-                        found = 0
-                        for sel in site["selectors"]:
-                            links = await page.query_selector_all(sel)
-                            if not links:
-                                continue
-                            pfx = site["prefix"]
-                            for link in links[:5]:
-                                try:
-                                    href = await link.get_attribute("href")
-                                    if not href:
-                                        continue
-                                    full = href if href.startswith("http") else f"{pfx}{href}"
-                                    if full not in [t["url"] for t in all_targets]:
-                                        all_targets.append({
-                                            "title": f"{name} - {full_name}",
-                                            "url": full,
-                                            "broker_name": _broker_name_for(site, full),
-                                            "source": "direct",
-                                        })
-                                        found += 1
-                                except Exception:
-                                    continue
-                            if found:
-                                break
-
-                        if found:
-                            print(f"  {name:20s} {found} found")
-                        else:
-                            print(f"  {name:20s} no matches")
-
-                    except Exception as e:
-                        print(f"  {name:20s} ERR — {str(e)[:60]}")
-
-                await browser.close()
-
-                if all_targets:
-                    print(f"\n[+] SCAN COMPLETE. Found {len(all_targets)} targets.")
-                    return {"targets": all_targets}
-
+                # Break out of the proxy loop with the LAST good browser open.
+                # Direct scraping below runs against this browser/context/page.
+                last_good = (browser, context, page)
+                break
         except Exception as e:
             print(f"[!] Browser crash: {str(e)[:100]}")
             continue
+    else:
+        # Exhausted all proxies with no usable DDG result
+        print("\n[+] SCAN COMPLETE. Found 0 targets.")
+        return {"targets": []}
 
-    print(f"\n[+] SCAN COMPLETE. Found 0 targets.")
-    return {"targets": []}
+    browser, context, page = last_good
+    try:
+        # ---- Direct broker scraping ----
+        # Skip sites behind PerimeterX/HUMAN (px-cloud.net) — they serve
+        # an unbeatable bot wall to headless Chromium. Their profile URLs
+        # are still captured by the DDG discovery pass above, so the user
+        # is told "found on X" without a deep scrape.
+        _SKIP_DIRECT = {"PeopleSearchNow"}
+        for site in sites:
+            name = site["name"]
+            if name in _SKIP_DIRECT:
+                continue
+            if any(t.get("broker_name", "").replace("www.", "") in name.lower()
+                   or name.lower() in t.get("broker_name", "").lower()
+                   for t in all_targets):
+                continue
+
+            url = site["url"](full_name, loc)
+            try:
+                resp = await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(2000)
+                status = resp.status if resp else 0
+
+                if status not in (200, 301, 302):
+                    print(f"  {name:20s} HTTP {status}")
+                    continue
+
+                text = await page.content()
+                _CHALLENGE = ("captcha", "access denied", "automated",
+                              "verify you are human", "just a moment",
+                              "checking your browser", "px-cloud.net",
+                              "challenges.cloudflare.com")
+                if any(w in text.lower() for w in _CHALLENGE):
+                    print(f"  {name:20s} blocked")
+                    continue
+
+                found = 0
+                for sel in site["selectors"]:
+                    links = await page.query_selector_all(sel)
+                    if not links:
+                        continue
+                    pfx = site["prefix"]
+                    for link in links[:5]:
+                        try:
+                            href = await link.get_attribute("href")
+                            if not href:
+                                continue
+                            full = href if href.startswith("http") else f"{pfx}{href}"
+                            if full not in [t["url"] for t in all_targets]:
+                                all_targets.append({
+                                    "title": f"{name} - {full_name}",
+                                    "url": full,
+                                    "broker_name": _broker_name_for(site, full),
+                                    "source": "direct",
+                                })
+                                found += 1
+                        except Exception:
+                            continue
+                    if found:
+                        break
+
+                if found:
+                    print(f"  {name:20s} {found} found")
+                else:
+                    print(f"  {name:20s} no matches")
+
+            except Exception as e:
+                print(f"  {name:20s} ERR — {str(e)[:60]}")
+
+        await browser.close()
+
+        print(f"\n[+] SCAN COMPLETE. Found {len(all_targets)} targets.")
+        return {"targets": all_targets}
+
+    except Exception as e:
+        print(f"[!] Direct-scrape crash: {str(e)[:100]}")
+        try:
+            await browser.close()
+        except Exception:
+            pass
+        return {"targets": all_targets}
